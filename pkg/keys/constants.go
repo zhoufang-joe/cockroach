@@ -284,8 +284,7 @@ var (
 	// NamespaceTableMax is the end key of system.namespace.
 	NamespaceTableMax = SystemSQLCodec.TablePrefix(NamespaceTableID + 1)
 	//
-	// RangeEventTableMin is the start key of system.rangelog, which is a system
-	// table that does not reside in the same range as other system tables.
+	// RangeEventTableMin is the start key of system.rangelog.
 	RangeEventTableMin = SystemSQLCodec.TablePrefix(RangeEventTableID)
 	// RangeEventTableMax is the end key of system.rangelog.
 	RangeEventTableMax = SystemSQLCodec.TablePrefix(RangeEventTableID + 1)
