@@ -74,6 +74,15 @@ func (oi *offsetInjector) deploy(ctx context.Context) error {
 	); err != nil {
 		return err
 	}
+	// bumptime.c calls settimeofday() with a 'struct timezone tz*' argument
+	// that causes the executable to fail with an "invalid argument" error
+	// on more recent Ubuntus. Quoth `man settimeofday`:
+	//     "The use of the timezone structure is obsolete; the tz argument
+	//      should normally be specified as NULL."
+	if err := oi.c.RunL(ctx, oi.c.l,
+		oi.c.All(), "sed", "-i", "s/&tz/NULL/g", "bumptime.c"); err != nil {
+		return err
+	}
 	if err := oi.c.RunL(ctx, oi.c.l,
 		oi.c.All(), "gcc", "bumptime.c", "-o", "bumptime", "&&", "rm bumptime.c",
 	); err != nil {
