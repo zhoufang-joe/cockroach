@@ -324,6 +324,10 @@ func (tr *tableReader) generateMeta() []execinfrapb.ProducerMetadata {
 	meta.Metrics = execinfrapb.GetMetricsMeta()
 	meta.Metrics.BytesRead = tr.fetcher.GetBytesRead()
 	meta.Metrics.RowsRead = tr.rowsRead
+
+	// TODO: Add auto_multi_region increment here?
+
+
 	return append(trailingMeta, *meta)
 }
 

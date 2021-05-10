@@ -12,7 +12,7 @@ package sql
 
 import (
 	"context"
-
+	"fmt"
 	"github.com/cockroachdb/cockroach/pkg/kv"
 	"github.com/cockroachdb/cockroach/pkg/roachpb"
 	"github.com/cockroachdb/cockroach/pkg/sql/catalog"
@@ -20,6 +20,7 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/sql/row"
 	"github.com/cockroachdb/cockroach/pkg/sql/rowcontainer"
 	"github.com/cockroachdb/cockroach/pkg/sql/sem/tree"
+	"github.com/cockroachdb/cockroach/pkg/sql/sessiondata"
 	"github.com/cockroachdb/cockroach/pkg/util/admission"
 	"github.com/cockroachdb/cockroach/pkg/util/log"
 )
@@ -72,7 +73,12 @@ type tableWriter interface {
 
 	// finalize flushes out any remaining writes. It is called after all calls
 	// to row.
-	finalize(context.Context) error
+	finalize(runParams) error
+
+	// finalizeForDelete performs finalization for the delete path
+	// FIXME: This is a huge hack to work around the fact that the delete path
+	//  doesn't have a runParams. Clean this up.
+	finalizeForDelete(context.Context) error
 
 	// tableDesc returns the TableDescriptor for the table that the tableWriter
 	// will modify.
@@ -162,7 +168,40 @@ func (tb *tableWriterBase) flushAndStartNewBatch(ctx context.Context) error {
 }
 
 // finalize shares the common finalize() code between tableWriters.
-func (tb *tableWriterBase) finalize(ctx context.Context) (err error) {
+func (tb *tableWriterBase) finalize(params runParams) (err error) {
+	ctx := params.ctx
+
+	// Before we commit, do any auto multi-region work required.
+	// FIXME: This should ideally use a separate transaction, and be run in the
+	//  background.
+	// FIXME: we need to plumb the gateway_region down here...
+	// FIXME: Create a logic test...
+	if tb.desc.IsAutoMultiRegionEnabled() && tb.desc.GetName() != tree.AutoMultiRegionTableName {
+		autoMultiRegionStatement := fmt.Sprintf(
+			`INSERT INTO %s.%s (crdb_region, tab, writes) VALUES ('us-east1', '%s', %d) ON CONFLICT (tab) DO UPDATE SET writes = %q.writes + %d`,
+			tree.AutoMultiRegionSchemaName,
+			tree.AutoMultiRegionTableName,
+			tb.desc.GetName(),
+			tb.currentBatchSize,
+			tree.AutoMultiRegionTableName,
+			tb.currentBatchSize,
+		)
+
+		if _, err := params.ExecCfg().InternalExecutor.ExecEx(
+			ctx,
+			"update-auto-multi-region-table",
+			tb.txn,
+			sessiondata.InternalExecutorOverride{
+				User: params.p.User(),
+				Database: params.SessionData().Database,
+			},
+			autoMultiRegionStatement,
+		); err != nil {
+			return err
+		}
+	}
+
+
 	// NB: unlike flushAndStartNewBatch, we don't bother with admission control
 	// for response processing when finalizing.
 	if tb.autoCommit == autoCommitEnabled {
@@ -175,6 +214,29 @@ func (tb *tableWriterBase) finalize(ctx context.Context) (err error) {
 		err = tb.txn.Run(ctx, tb.b)
 	}
 	tb.lastBatchSize = tb.currentBatchSize
+
+
+	if err != nil {
+		return row.ConvertBatchError(ctx, tb.desc, tb.b)
+	}
+	return nil
+}
+
+// finalize shares the common finalize() code between tableWriters.
+func (tb *tableWriterBase) finalizeForDelete (ctx context.Context) (err error) {
+	// NB: unlike flushAndStartNewBatch, we don't bother with admission control
+	// for response processing when finalizing.
+	if tb.autoCommit == autoCommitEnabled {
+		log.Event(ctx, "autocommit enabled")
+		// An auto-txn can commit the transaction with the batch. This is an
+		// optimization to avoid an extra round-trip to the transaction
+		// coordinator.
+		err = tb.txn.CommitInBatch(ctx, tb.b)
+	} else {
+		err = tb.txn.Run(ctx, tb.b)
+	}
+	tb.lastBatchSize = tb.currentBatchSize
+
 	if err != nil {
 		return row.ConvertBatchError(ctx, tb.desc, tb.b)
 	}
