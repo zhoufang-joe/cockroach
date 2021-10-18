@@ -17,6 +17,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"time"
 
 	"github.com/cockroachdb/cockroach/pkg/util/log"
 	"github.com/cockroachdb/cockroach/pkg/util/metric"
@@ -227,11 +228,20 @@ func (cm *CertificateManager) Metrics() CertificateMetrics {
 // refresh of the certificates directory on notification.
 func (cm *CertificateManager) RegisterSignalHandler(stopper *stop.Stopper) {
 	go func() {
+		tick := time.NewTicker(1 * time.Hour)
+		defer tick.Stop()
 		ch := sysutil.RefreshSignaledChan()
 		for {
 			select {
 			case <-stopper.ShouldStop():
 				return
+			case <-tick.C:
+				log.Info(context.Background(), "received hourly refresh signal, triggering certificate reload")
+				if err := cm.LoadCertificates(); err != nil {
+					log.Warningf(context.Background(), "could not reload certificates: %v", err)
+				} else {
+					log.Info(context.Background(), "successfully reloaded certificates")
+				}
 			case sig := <-ch:
 				log.Infof(context.Background(), "received signal %q, triggering certificate reload", sig)
 				if err := cm.LoadCertificates(); err != nil {
