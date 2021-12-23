@@ -15,55 +15,56 @@ import (
 	"fmt"
 )
 
+// slotIdx is an integer in the range [0, MaxSetting) which is uniquely
+// associated with a registered setting. Slot indexes are used as "handles" for
+// manipulating the setting values. They are generated sequentially, in the
+// order of registration.
+type slotIdx int32
+
 // common implements basic functionality used by all setting types.
 type common struct {
-	description string
-	class       Class
-	visibility  Visibility
-	// Each setting has a slotIdx which is used as a handle with Values.
-	slotIdx       int
+	class         Class
+	description   string
+	visibility    Visibility
+	slot          slotIdx
 	nonReportable bool
 	retired       bool
 }
 
 // init must be called to initialize the fields that don't have defaults.
-func (i *common) init(class Class, slotIdx int, description string) {
-	i.class = class
-	if slotIdx < 1 {
-		panic(fmt.Sprintf("Invalid slot index %d", slotIdx))
+func (c *common) init(class Class, description string, slot slotIdx) {
+	c.class = class
+	c.description = description
+	if slot < 0 {
+		panic(fmt.Sprintf("Invalid slot index %d", slot))
 	}
-	if slotIdx > MaxSettings {
+	if slot >= MaxSettings {
 		panic("too many settings; increase MaxSettings")
 	}
-	i.slotIdx = slotIdx
-	i.description = description
+	c.slot = slot
 }
 
-func (i *common) isRetired() bool {
-	return i.retired
+func (c *common) isRetired() bool {
+	return c.retired
 }
 
-func (i *common) getSlotIdx() int {
-	return i.slotIdx
+func (c common) Description() string {
+	return c.description
 }
 
-func (i common) Description() string {
-	return i.description
+func (c common) Class() Class {
+	return c.class
 }
 
-func (i common) Class() Class {
-	return i.class
+func (c common) Visibility() Visibility {
+	return c.visibility
 }
 
-func (i common) Visibility() Visibility {
-	return i.visibility
+func (c common) isReportable() bool {
+	return !c.nonReportable
 }
 
-func (i common) isReportable() bool {
-	return !i.nonReportable
-}
-
-func (i *common) ErrorHint() (bool, string) {
+func (c *common) ErrorHint() (bool, string) {
 	return false, ""
 }
 
@@ -77,36 +78,36 @@ func (i *common) ErrorHint() (bool, string) {
 //
 // All string settings are also non-reportable by default and must be
 // opted in to reports manually with SetReportable(true).
-func (i *common) SetReportable(reportable bool) {
-	i.nonReportable = !reportable
+func (c *common) SetReportable(reportable bool) {
+	c.nonReportable = !reportable
 }
 
 // SetVisibility customizes the visibility of a setting.
-func (i *common) SetVisibility(v Visibility) {
-	i.visibility = v
+func (c *common) SetVisibility(v Visibility) {
+	c.visibility = v
 }
 
 // SetRetired marks the setting as obsolete. It also hides
 // it from the output of SHOW CLUSTER SETTINGS.
-func (i *common) SetRetired() {
-	i.description = "do not use - " + i.description
-	i.retired = true
+func (c *common) SetRetired() {
+	c.description = "do not use - " + c.description
+	c.retired = true
 }
 
 // SetOnChange installs a callback to be called when a setting's value changes.
 // `fn` should avoid doing long-running or blocking work as it is called on the
 // goroutine which handles all settings updates.
-func (i *common) SetOnChange(sv *Values, fn func(ctx context.Context)) {
-	sv.setOnChange(i.slotIdx, fn)
+func (c *common) SetOnChange(sv *Values, fn func(ctx context.Context)) {
+	sv.setOnChange(c.slot, fn)
 }
 
 type internalSetting interface {
 	NonMaskedSetting
 
-	init(class Class, slotIdx int, desc string)
+	init(class Class, desc string, slot slotIdx)
 	isRetired() bool
 	setToDefault(ctx context.Context, sv *Values)
-	getSlotIdx() int
+
 	// isReportable indicates whether the value of the setting can be
 	// included in user-facing reports such as that produced by SHOW ALL
 	// CLUSTER SETTINGS.
@@ -120,5 +121,5 @@ type internalSetting interface {
 // numericSetting is used for settings that can be set using an integer value.
 type numericSetting interface {
 	internalSetting
-	set(ctx context.Context, sv *Values, i int64) error
+	set(ctx context.Context, sv *Values, value int64) error
 }

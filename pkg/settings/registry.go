@@ -142,9 +142,9 @@ func register(class Class, key, desc string, s internalSetting) {
 			))
 		}
 	}
+	slot := slotIdx(len(registry))
+	s.init(class, desc, slot)
 	registry[key] = s
-	slotIdx := len(registry)
-	s.init(class, slotIdx, desc)
 }
 
 // NumRegisteredSettings returns the number of registered settings.
