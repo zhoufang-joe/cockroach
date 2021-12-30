@@ -17,6 +17,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"time"
 
 	"github.com/cockroachdb/cockroach/pkg/util/log"
 	"github.com/cockroachdb/cockroach/pkg/util/log/eventpb"
@@ -230,11 +231,22 @@ func (cm *CertificateManager) Metrics() CertificateMetrics {
 func (cm *CertificateManager) RegisterSignalHandler(stopper *stop.Stopper) {
 	ctx := context.Background()
 	go func() {
+		tick := time.NewTicker(1 * time.Hour)
+		defer tick.Stop()
 		ch := sysutil.RefreshSignaledChan()
 		for {
 			select {
 			case <-stopper.ShouldQuiesce():
 				return
+			case <-tick.C:
+				log.Ops.Info(ctx, "received hourly refresh signal, triggering certificate reload")
+				log.Info(context.Background(), "received hourly refresh signal, triggering certificate reload")
+				if err := cm.LoadCertificates(); err != nil {
+					log.Ops.Warningf(ctx, "could not reload certificates: %v", err)
+					log.StructuredEvent(ctx, &eventpb.CertsReload{Success: false, ErrorMessage: err.Error()})
+				} else {
+					log.StructuredEvent(ctx, &eventpb.CertsReload{Success: true})
+				}
 			case sig := <-ch:
 				log.Ops.Infof(ctx, "received signal %q, triggering certificate reload", sig)
 				if err := cm.LoadCertificates(); err != nil {
